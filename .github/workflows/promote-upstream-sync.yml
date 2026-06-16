@@ -1,0 +1,85 @@
+name: promote-upstream-sync
+
+on:
+  push:
+    branches:
+      - "daily-cpa-upstream-sync-*"
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Sync branch to promote to main"
+        required: true
+        default: "daily-cpa-upstream-sync-YYYYMMDD"
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: promote-upstream-sync-main
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve source branch
+        id: source
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            branch="${{ inputs.branch }}"
+          else
+            branch="${GITHUB_REF_NAME}"
+          fi
+          case "${branch}" in
+            daily-cpa-upstream-sync-*) ;;
+            *)
+              echo "Only daily-cpa-upstream-sync-* branches can be promoted." >&2
+              exit 1
+              ;;
+          esac
+          echo "branch=${branch}" >> "${GITHUB_OUTPUT}"
+
+      - name: Checkout sync branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.source.outputs.branch }}
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Verify branch can fast-forward main
+        run: |
+          set -euo pipefail
+          git fetch origin main --prune
+          if ! git merge-base --is-ancestor origin/main HEAD; then
+            echo "Refusing to promote: origin/main is not an ancestor of ${GITHUB_SHA}." >&2
+            echo "Rebase or merge latest main into the sync branch first." >&2
+            exit 1
+          fi
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run promotion tests
+        run: |
+          go test \
+            ./cmd/server \
+            ./internal/safemode \
+            ./internal/api/middleware \
+            ./internal/logging \
+            ./internal/runtime/executor \
+            ./internal/runtime/executor/helps \
+            ./sdk/api/handlers/openai
+
+      - name: Promote to main
+        run: |
+          set -euo pipefail
+          git push origin HEAD:main

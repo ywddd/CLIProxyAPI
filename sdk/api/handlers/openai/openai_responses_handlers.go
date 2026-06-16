@@ -313,12 +313,12 @@ func responsesSSENeedsLineBreak(pending, chunk []byte) bool {
 	if len(trimmed) == 0 {
 		return false
 	}
-	for _, prefix := range [][]byte{[]byte("data:"), []byte("event:"), []byte("id:"), []byte("retry:"), []byte(":")} {
+	for _, prefix := range [][]byte{[]byte("data:"), []byte("event:"), []byte("id:"), []byte("retry:")} {
 		if bytes.HasPrefix(trimmed, prefix) {
 			return true
 		}
 	}
-	return false
+	return bytes.HasPrefix(trimmed, []byte(": ")) || bytes.Equal(trimmed, []byte(":"))
 }
 
 // OpenAIResponsesAPIHandler contains the handlers for OpenAIResponses API endpoints.
@@ -494,6 +494,15 @@ func (h *OpenAIResponsesAPIHandler) handleStreamingResponse(c *gin.Context, rawJ
 		c.Header("Access-Control-Allow-Origin", "*")
 	}
 	framer := &responsesSSEFramer{}
+
+	if handlers.StreamingKeepAliveInterval(h.Cfg) > 0 {
+		setSSEHeaders()
+		handlers.WriteUpstreamHeaders(c.Writer.Header(), upstreamHeaders)
+		_, _ = c.Writer.Write([]byte(": keep-alive\n\n"))
+		flusher.Flush()
+		h.forwardResponsesStream(c, flusher, func(err error) { cliCancel(err) }, dataChan, errChan, framer)
+		return
+	}
 
 	// Peek at the first chunk
 	for {

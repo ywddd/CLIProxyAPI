@@ -184,10 +184,39 @@ func synthesizeFileAuths(ctx *SynthesisContext, fullPath string, data []byte) []
 	ApplyAuthExcludedModelsMeta(a, cfg, perAccountExcluded, "oauth")
 	// For codex auth files, extract plan_type from the JWT id_token.
 	if provider == "codex" {
+		if accountID := firstMetadataString(metadata, "chatgpt_account_id", "chatgptAccountId", "account_id", "accountId"); accountID != "" {
+			a.Attributes["account_id"] = accountID
+			a.Attributes["chatgpt_account_id"] = accountID
+		}
+		if planType := firstMetadataString(metadata, "chatgpt_plan_type", "chatgptPlanType", "plan_type", "planType"); planType != "" {
+			a.Attributes["plan_type"] = planType
+			a.Attributes["chatgpt_plan_type"] = planType
+		}
 		if idTokenRaw, ok := metadata["id_token"].(string); ok && strings.TrimSpace(idTokenRaw) != "" {
 			if claims, errParse := codex.ParseJWTToken(idTokenRaw); errParse == nil && claims != nil {
+				if accountID := codexAccountIDFromClaims(claims); accountID != "" {
+					a.Attributes["account_id"] = accountID
+					a.Attributes["chatgpt_account_id"] = accountID
+				}
 				if pt := strings.TrimSpace(claims.CodexAuthInfo.ChatgptPlanType); pt != "" {
 					a.Attributes["plan_type"] = pt
+					a.Attributes["chatgpt_plan_type"] = pt
+				}
+			}
+		}
+		if accessTokenRaw, ok := metadata["access_token"].(string); ok && strings.TrimSpace(accessTokenRaw) != "" {
+			if claims, errParse := codex.ParseJWTToken(accessTokenRaw); errParse == nil && claims != nil {
+				if _, ok := a.Attributes["account_id"]; !ok {
+					if accountID := codexAccountIDFromClaims(claims); accountID != "" {
+						a.Attributes["account_id"] = accountID
+						a.Attributes["chatgpt_account_id"] = accountID
+					}
+				}
+				if _, ok := a.Attributes["plan_type"]; !ok {
+					if pt := strings.TrimSpace(claims.CodexAuthInfo.ChatgptPlanType); pt != "" {
+						a.Attributes["plan_type"] = pt
+						a.Attributes["chatgpt_plan_type"] = pt
+					}
 				}
 			}
 		}
@@ -204,6 +233,64 @@ func synthesizeFileAuths(ctx *SynthesisContext, fullPath string, data []byte) []
 		}
 	}
 	return []*coreauth.Auth{a}
+}
+
+func firstMetadataString(metadata map[string]any, keys ...string) string {
+	for _, key := range keys {
+		raw, ok := metadata[key]
+		if !ok || raw == nil {
+			continue
+		}
+		switch v := raw.(type) {
+		case string:
+			if trimmed := strings.TrimSpace(v); trimmed != "" {
+				return trimmed
+			}
+		case fmt.Stringer:
+			if trimmed := strings.TrimSpace(v.String()); trimmed != "" {
+				return trimmed
+			}
+		default:
+			if trimmed := strings.TrimSpace(fmt.Sprint(v)); trimmed != "" {
+				return trimmed
+			}
+		}
+	}
+	return ""
+}
+
+func codexAccountIDFromClaims(claims *codex.JWTClaims) string {
+	if claims == nil {
+		return ""
+	}
+	for _, value := range []string{
+		claims.CodexAuthInfo.ChatgptAccountID,
+		claims.CodexAuthInfo.ChatgptUserID,
+		claims.CodexAuthInfo.UserID,
+	} {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func codexPlanTypeFromFileName(name string) string {
+	baseName := filepath.Base(strings.TrimSpace(name))
+	base := strings.ToLower(strings.TrimSuffix(baseName, filepath.Ext(baseName)))
+	if base == "" {
+		return ""
+	}
+	parts := strings.FieldsFunc(base, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9')
+	})
+	for _, part := range parts {
+		switch part {
+		case "free", "plus", "team", "pro", "prolite", "max", "max5", "max20":
+			return part
+		}
+	}
+	return ""
 }
 
 // SynthesizeGeminiVirtualAuths creates virtual Auth entries for multi-project Gemini credentials.

@@ -18,6 +18,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	responsesconverter "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/openai/openai/responses"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -113,6 +114,17 @@ func (h *OpenAIAPIHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
+	rawJSON, err = normalizeOpenAIRequestJSONForRouting(rawJSON)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, handlers.ErrorResponse{
+			Error: handlers.ErrorDetail{
+				Message: fmt.Sprintf("Invalid request JSON: %v", err),
+				Type:    "invalid_request_error",
+			},
+		})
+		return
+	}
+
 	// Check if the client requested a streaming response.
 	streamResult := gjson.GetBytes(rawJSON, "stream")
 	stream := streamResult.Type == gjson.True
@@ -148,6 +160,20 @@ func shouldTreatAsResponsesFormat(rawJSON []byte) bool {
 	return false
 }
 
+func normalizeOpenAIRequestJSONForRouting(rawJSON []byte) ([]byte, error) {
+	if json.Valid(rawJSON) {
+		return rawJSON, nil
+	}
+	if repaired, changed := util.RepairInvalidJSONStringEscapes(rawJSON); changed {
+		return repaired, nil
+	}
+	var decoded any
+	if err := json.Unmarshal(rawJSON, &decoded); err != nil {
+		return nil, err
+	}
+	return rawJSON, nil
+}
+
 // Completions handles the /v1/completions endpoint.
 // It determines whether the request is for a streaming or non-streaming response
 // and calls the appropriate handler based on the model provider.
@@ -162,6 +188,17 @@ func (h *OpenAIAPIHandler) Completions(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, handlers.ErrorResponse{
 			Error: handlers.ErrorDetail{
 				Message: fmt.Sprintf("Invalid request: %v", err),
+				Type:    "invalid_request_error",
+			},
+		})
+		return
+	}
+
+	rawJSON, err = normalizeOpenAIRequestJSONForRouting(rawJSON)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, handlers.ErrorResponse{
+			Error: handlers.ErrorDetail{
+				Message: fmt.Sprintf("Invalid request JSON: %v", err),
 				Type:    "invalid_request_error",
 			},
 		})

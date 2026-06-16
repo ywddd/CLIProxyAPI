@@ -2,6 +2,7 @@ package management
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -66,6 +67,101 @@ func TestListAuthFilesFromDisk_IncludesProjectID(t *testing.T) {
 	entry := firstAuthFileEntry(t, h)
 	if got := entry["project_id"]; got != "project-a" {
 		t.Fatalf("expected project_id %q, got %#v", "project-a", got)
+	}
+}
+
+func TestListAuthFiles_IncludesCodexAccountFieldsFromManager(t *testing.T) {
+	t.Setenv("MANAGEMENT_PASSWORD", "")
+	gin.SetMode(gin.TestMode)
+
+	authDir := t.TempDir()
+	fileName := "codex-user@example.com.json"
+	filePath := filepath.Join(authDir, fileName)
+	if errWrite := os.WriteFile(filePath, []byte(`{"type":"codex","email":"user@example.com","account_id":"acct-123","plan_type":"plus"}`), 0o600); errWrite != nil {
+		t.Fatalf("failed to write auth file: %v", errWrite)
+	}
+
+	manager := coreauth.NewManager(nil, nil, nil)
+	record := &coreauth.Auth{
+		ID:       fileName,
+		FileName: fileName,
+		Provider: "codex",
+		Status:   coreauth.StatusActive,
+		Attributes: map[string]string{
+			"path":    filePath,
+			"account": "acct-ignored",
+		},
+		Metadata: map[string]any{
+			"type":       "codex",
+			"email":      "user@example.com",
+			"account_id": "acct-123",
+			"plan_type":  "plus",
+		},
+	}
+	if _, errRegister := manager.Register(context.Background(), record); errRegister != nil {
+		t.Fatalf("failed to register auth record: %v", errRegister)
+	}
+
+	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: authDir}, manager)
+	h.tokenStore = &memoryAuthStore{}
+
+	entry := firstAuthFileEntry(t, h)
+	if got := entry["account_id"]; got != "acct-123" {
+		t.Fatalf("expected account_id %q, got %#v", "acct-123", got)
+	}
+	if got := entry["chatgpt_account_id"]; got != "acct-123" {
+		t.Fatalf("expected chatgpt_account_id %q, got %#v", "acct-123", got)
+	}
+	if got := entry["plan_type"]; got != "plus" {
+		t.Fatalf("expected plan_type %q, got %#v", "plus", got)
+	}
+	if got := entry["chatgpt_plan_type"]; got != "plus" {
+		t.Fatalf("expected chatgpt_plan_type %q, got %#v", "plus", got)
+	}
+}
+
+func TestListAuthFiles_CodexFallsBackToJWTUserIDWithoutFilenamePlan(t *testing.T) {
+	t.Setenv("MANAGEMENT_PASSWORD", "")
+	gin.SetMode(gin.TestMode)
+
+	authDir := t.TempDir()
+	fileName := "codex-user@example.com-free.json"
+	filePath := filepath.Join(authDir, fileName)
+	if errWrite := os.WriteFile(filePath, []byte(`{"type":"codex","email":"user@example.com","account_id":"","id_token":"unused"}`), 0o600); errWrite != nil {
+		t.Fatalf("failed to write auth file: %v", errWrite)
+	}
+
+	manager := coreauth.NewManager(nil, nil, nil)
+	record := &coreauth.Auth{
+		ID:       fileName,
+		FileName: fileName,
+		Provider: "codex",
+		Status:   coreauth.StatusActive,
+		Attributes: map[string]string{
+			"path": filePath,
+		},
+		Metadata: map[string]any{
+			"type":     "codex",
+			"email":    "user@example.com",
+			"id_token": testJWT(`{"https://api.openai.com/auth":{"user_id":"user-123"}}`),
+		},
+	}
+	if _, errRegister := manager.Register(context.Background(), record); errRegister != nil {
+		t.Fatalf("failed to register auth record: %v", errRegister)
+	}
+
+	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: authDir}, manager)
+	h.tokenStore = &memoryAuthStore{}
+
+	entry := firstAuthFileEntry(t, h)
+	if got := entry["account_id"]; got != "user-123" {
+		t.Fatalf("expected account_id fallback %q, got %#v", "user-123", got)
+	}
+	if got := entry["chatgpt_account_id"]; got != "user-123" {
+		t.Fatalf("expected chatgpt_account_id fallback %q, got %#v", "user-123", got)
+	}
+	if got, ok := entry["plan_type"]; ok {
+		t.Fatalf("did not expect filename-derived plan_type, got %#v", got)
 	}
 }
 
@@ -152,4 +248,9 @@ func firstAuthFileEntry(t *testing.T, h *Handler) map[string]any {
 		t.Fatalf("expected file entry object, got %#v", filesRaw[0])
 	}
 	return fileEntry
+}
+
+func testJWT(payload string) string {
+	enc := base64.RawURLEncoding.EncodeToString
+	return enc([]byte(`{"alg":"none"}`)) + "." + enc([]byte(payload)) + ".sig"
 }

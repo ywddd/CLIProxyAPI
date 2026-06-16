@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -58,7 +59,7 @@ func (e *failOnceStreamExecutor) ExecuteStream(context.Context, *coreauth.Auth, 
 }
 
 func (e *failOnceStreamExecutor) Refresh(ctx context.Context, auth *coreauth.Auth) (*coreauth.Auth, error) {
-	return auth, nil
+	return nil, nil
 }
 
 func (e *failOnceStreamExecutor) CountTokens(context.Context, *coreauth.Auth, coreexecutor.Request, coreexecutor.Options) (coreexecutor.Response, error) {
@@ -134,6 +135,11 @@ func (e *payloadThenErrorStreamExecutor) Calls() int {
 type authAwareStreamExecutor struct {
 	mu      sync.Mutex
 	calls   int
+	authIDs []string
+}
+
+type contextTooLargeFreeStreamExecutor struct {
+	mu      sync.Mutex
 	authIDs []string
 }
 
@@ -270,6 +276,69 @@ func (e *authAwareStreamExecutor) AuthIDs() []string {
 	return out
 }
 
+func (e *contextTooLargeFreeStreamExecutor) Identifier() string { return "codex" }
+
+func (e *contextTooLargeFreeStreamExecutor) Execute(context.Context, *coreauth.Auth, coreexecutor.Request, coreexecutor.Options) (coreexecutor.Response, error) {
+	return coreexecutor.Response{}, &coreauth.Error{Code: "not_implemented", Message: "Execute not implemented"}
+}
+
+func (e *contextTooLargeFreeStreamExecutor) ExecuteStream(ctx context.Context, auth *coreauth.Auth, req coreexecutor.Request, opts coreexecutor.Options) (*coreexecutor.StreamResult, error) {
+	_ = ctx
+	_ = req
+	_ = opts
+
+	authID := ""
+	if auth != nil {
+		authID = auth.ID
+	}
+
+	e.mu.Lock()
+	e.authIDs = append(e.authIDs, authID)
+	e.mu.Unlock()
+
+	ch := make(chan coreexecutor.StreamChunk, 1)
+	if authID == "auth-free" {
+		ch <- coreexecutor.StreamChunk{
+			Err: &coreauth.Error{
+				Code:       "context_too_large",
+				Message:    "Your input exceeds the context window of this model.",
+				Retryable:  false,
+				HTTPStatus: http.StatusBadRequest,
+			},
+		}
+		close(ch)
+		return &coreexecutor.StreamResult{Chunks: ch}, nil
+	}
+
+	ch <- coreexecutor.StreamChunk{Payload: []byte("ok")}
+	close(ch)
+	return &coreexecutor.StreamResult{Chunks: ch}, nil
+}
+
+func (e *contextTooLargeFreeStreamExecutor) Refresh(ctx context.Context, auth *coreauth.Auth) (*coreauth.Auth, error) {
+	return auth, nil
+}
+
+func (e *contextTooLargeFreeStreamExecutor) CountTokens(context.Context, *coreauth.Auth, coreexecutor.Request, coreexecutor.Options) (coreexecutor.Response, error) {
+	return coreexecutor.Response{}, &coreauth.Error{Code: "not_implemented", Message: "CountTokens not implemented"}
+}
+
+func (e *contextTooLargeFreeStreamExecutor) HttpRequest(ctx context.Context, auth *coreauth.Auth, req *http.Request) (*http.Response, error) {
+	return nil, &coreauth.Error{
+		Code:       "not_implemented",
+		Message:    "HttpRequest not implemented",
+		HTTPStatus: http.StatusNotImplemented,
+	}
+}
+
+func (e *contextTooLargeFreeStreamExecutor) AuthIDs() []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out := make([]string, len(e.authIDs))
+	copy(out, e.authIDs)
+	return out
+}
+
 func TestExecuteStreamWithAuthManager_RetriesBeforeFirstByte(t *testing.T) {
 	executor := &failOnceStreamExecutor{}
 	manager := coreauth.NewManager(nil, nil, nil)
@@ -333,6 +402,79 @@ func TestExecuteStreamWithAuthManager_RetriesBeforeFirstByte(t *testing.T) {
 	upstreamAttemptHeader := upstreamHeaders.Get("X-Upstream-Attempt")
 	if upstreamAttemptHeader != "2" {
 		t.Fatalf("expected upstream header from retry attempt, got %q", upstreamAttemptHeader)
+	}
+}
+
+func TestContextTooLargeBootstrapRetryDisallowsFreeAuth(t *testing.T) {
+	opts := coreexecutor.Options{Metadata: map[string]any{"keep": "yes"}}
+	opts = withDisallowFreeAuthMetadata(opts)
+
+	if got := opts.Metadata[coreexecutor.DisallowFreeAuthMetadataKey]; got != true {
+		t.Fatalf("disallow_free_auth metadata = %#v, want true", got)
+	}
+	if got := opts.Metadata["keep"]; got != "yes" {
+		t.Fatalf("existing metadata was not preserved: %#v", opts.Metadata)
+	}
+	if !isContextTooLargeStreamBootstrapError(fmt.Errorf(`{"error":{"code":"context_too_large","message":"Your input exceeds the context window"}}`)) {
+		t.Fatalf("expected context_too_large bootstrap error to be retryable")
+	}
+}
+
+func TestExecuteStreamWithAuthManager_ContextTooLargeBootstrapRetriesWithoutFreeAuth(t *testing.T) {
+	executor := &contextTooLargeFreeStreamExecutor{}
+	manager := coreauth.NewManager(nil, nil, nil)
+	manager.RegisterExecutor(executor)
+
+	authFree := &coreauth.Auth{
+		ID:         "auth-free",
+		Provider:   "codex",
+		Status:     coreauth.StatusActive,
+		Metadata:   map[string]any{"email": "free@example.com"},
+		Attributes: map[string]string{"plan_type": "free"},
+	}
+	if _, err := manager.Register(context.Background(), authFree); err != nil {
+		t.Fatalf("manager.Register(authFree): %v", err)
+	}
+
+	authPlus := &coreauth.Auth{
+		ID:         "auth-plus",
+		Provider:   "codex",
+		Status:     coreauth.StatusActive,
+		Metadata:   map[string]any{"email": "plus@example.com"},
+		Attributes: map[string]string{"plan_type": "plus"},
+	}
+	if _, err := manager.Register(context.Background(), authPlus); err != nil {
+		t.Fatalf("manager.Register(authPlus): %v", err)
+	}
+
+	registry.GetGlobalRegistry().RegisterClient(authFree.ID, authFree.Provider, []*registry.ModelInfo{{ID: "test-model"}})
+	registry.GetGlobalRegistry().RegisterClient(authPlus.ID, authPlus.Provider, []*registry.ModelInfo{{ID: "test-model"}})
+	t.Cleanup(func() {
+		registry.GetGlobalRegistry().UnregisterClient(authFree.ID)
+		registry.GetGlobalRegistry().UnregisterClient(authPlus.ID)
+	})
+
+	handler := NewBaseAPIHandlers(&sdkconfig.SDKConfig{}, manager)
+	dataChan, _, errChan := handler.ExecuteStreamWithAuthManager(context.Background(), "openai", "test-model", []byte(`{"model":"test-model"}`), "")
+	if dataChan == nil || errChan == nil {
+		t.Fatalf("expected non-nil channels")
+	}
+
+	var got []byte
+	for chunk := range dataChan {
+		got = append(got, chunk...)
+	}
+	for msg := range errChan {
+		if msg != nil {
+			t.Fatalf("unexpected error: %+v", msg)
+		}
+	}
+
+	if string(got) != "ok" {
+		t.Fatalf("expected payload ok, got %q", string(got))
+	}
+	if gotIDs := strings.Join(executor.AuthIDs(), ","); gotIDs != "auth-free,auth-plus" {
+		t.Fatalf("auth sequence = %q, want auth-free,auth-plus", gotIDs)
 	}
 }
 

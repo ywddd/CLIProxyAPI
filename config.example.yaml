@@ -179,6 +179,9 @@ enable-gemini-cli-endpoint: false
 
 # When > 0, emit blank lines every N seconds for non-streaming responses to prevent idle timeouts.
 nonstream-keepalive-interval: 0
+# Maximum seconds Codex HTTP requests may wait for upstream response headers.
+# The stream body remains unlimited after headers arrive. 0 uses the default (180); < 0 disables.
+codex-response-header-timeout-seconds: 180
 # Streaming behavior (SSE keep-alives + safe bootstrap retries).
 # streaming:
 #   keepalive-seconds: 15   # Default: 0 (disabled). <= 0 disables keep-alives.

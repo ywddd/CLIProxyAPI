@@ -577,6 +577,35 @@ func TestCodexExecutorReasoningReplayCacheClearsOnNonStreamResponseFailedInvalid
 	}
 }
 
+func TestCodexExecutorReasoningReplayCacheClearsOnMissingStoredReasoningItem(t *testing.T) {
+	internalcache.ClearCodexReasoningReplayCache()
+	t.Cleanup(internalcache.ClearCodexReasoningReplayCache)
+
+	cachedEncryptedContent := validCodexReasoningEncryptedContentForTestSeed(11)
+	const sessionKey = "claude:session-missing-item"
+	if !internalcache.CacheCodexReasoningReplayItem("gpt-5.4", sessionKey, []byte(`{"type":"reasoning","summary":[],"content":null,"encrypted_content":"`+cachedEncryptedContent+`"}`)) {
+		t.Fatal("failed to seed reasoning replay cache")
+	}
+
+	body := []byte(`{
+		"error":{
+			"message":"Item with id 'rs_00288ba3a95e1f77016a1f91ac88448191b18d9cb239c29752' not found. Items are not persisted when ` + "`store`" + ` is set to false. Try again with ` + "`store`" + ` set to true, or remove this item from your input.",
+			"type":"invalid_request_error",
+			"param":"input",
+			"code":null
+		}
+	}`)
+
+	clearCodexReasoningReplayOnRejectedContext(context.Background(), codexReasoningReplayScope{
+		modelName:  "gpt-5.4",
+		sessionKey: sessionKey,
+	}, http.StatusNotFound, body)
+
+	if _, ok := internalcache.GetCodexReasoningReplayItem("gpt-5.4", sessionKey); ok {
+		t.Fatal("missing stored reasoning item should clear cached replay item")
+	}
+}
+
 func TestCodexExecutorReasoningReplayCacheClearsOnStreamResponseFailedInvalidSignature(t *testing.T) {
 	internalcache.ClearCodexReasoningReplayCache()
 	t.Cleanup(internalcache.ClearCodexReasoningReplayCache)

@@ -159,10 +159,12 @@ func TestForwardResponsesStreamRepairsMultilineCompletedOutputAsSSEDataLines(t *
 func TestForwardResponsesStreamReassemblesSplitSSEEventChunks(t *testing.T) {
 	h, recorder, c, flusher := newResponsesStreamTestHandler(t)
 
-	data := make(chan []byte, 3)
+	data := make(chan []byte, 5)
 	errs := make(chan *interfaces.ErrorMessage)
-	data <- []byte("event: response.created")
-	data <- []byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp-1\"}}")
+	data <- []byte("event: response.cre")
+	data <- []byte("ated")
+	data <- []byte("data: {\"type\":\"response.cre")
+	data <- []byte("ated\",\"response\":{\"id\":\"resp-1\"}}")
 	data <- []byte("\n")
 	close(data)
 	close(errs)
@@ -173,6 +175,26 @@ func TestForwardResponsesStreamReassemblesSplitSSEEventChunks(t *testing.T) {
 	want := "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp-1\"}}\n\n"
 	if got != want {
 		t.Fatalf("unexpected split-event framing.\nGot:  %q\nWant: %q", got, want)
+	}
+}
+
+func TestForwardResponsesStreamDoesNotTreatJSONColonContinuationAsSSEComment(t *testing.T) {
+	h, recorder, c, flusher := newResponsesStreamTestHandler(t)
+
+	data := make(chan []byte, 3)
+	errs := make(chan *interfaces.ErrorMessage)
+	data <- []byte("data: {\"type\":\"response.output_item.done\",\"item\"")
+	data <- []byte(":{\"id\":\"msg-1\",\"type\":\"message\"}}")
+	data <- []byte("\n")
+	close(data)
+	close(errs)
+
+	h.forwardResponsesStream(c, flusher, func(error) {}, data, errs, nil)
+
+	got := strings.TrimSuffix(recorder.Body.String(), "\n")
+	want := "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"msg-1\",\"type\":\"message\"}}\n\n"
+	if got != want {
+		t.Fatalf("unexpected colon-continuation framing.\nGot:  %q\nWant: %q", got, want)
 	}
 }
 
