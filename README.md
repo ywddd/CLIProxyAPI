@@ -2,10 +2,10 @@
 
 杩欐槸鍩轰簬 [router-for-me/CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) 鐨勮嚜鐢ㄦ瀯寤猴紝閲嶇偣鏈嶅姟 Codex/Responses 绋冲畾鎬с€佸璐﹀彿杩愯銆丯AS/Docker 閮ㄧ讲鍜屾棩甯?CPA 绠＄悊銆?
 
-褰撳墠鍚屾鍩虹嚎锛氫笂娓?`v7.2.45`銆傝嚜鐢ㄧ増鏈缓璁爣璁颁负锛?
+褰撳墠鍚屾鍩虹嚎锛氫笂娓?`v7.2.46`銆傝嚜鐢ㄧ増鏈缓璁爣璁颁负锛?
 
 ```text
-v7.2.45-selfuse.20260629
+v7.2.46-selfuse.20260629
 ```
 
 ## 鏈瀯寤轰繚鐣欑殑鏀瑰姩
@@ -63,7 +63,7 @@ Kimi K2.7 Code 绛夎蛋 `openai-compatibility` 鐨勬ā鍨嬪湪璇锋眰浣撳
 
 ## 涓婃父鍚屾鎽樿
 
-鏈疆浠?`v7.2.16` 鍚堝苟鍒?`v7.2.45`锛岄噸鐐瑰寘鎷細
+鏈疆浠?`v7.2.16` 鍚堝苟鍒?`v7.2.46`锛岄噸鐐瑰寘鎷細
 
 - 绠＄悊鏃ュ織 API 澧炲姞 cursor/tail/杞浆缁鑳藉姏銆?
 - 鎻掍欢鍒犻櫎銆侀厤缃慨鏀广€佺敓鍛藉懆鏈熷拰 stream callback 鐨勫紓姝?reload/race 淇銆?
@@ -112,13 +112,13 @@ CPA Plus:   http://<host>:18317/management.html
 鏈粨搴撶殑鑷敤鍙戝竷鐗堟湰鍥哄畾浣跨敤 `selfuse` 鍚庣紑锛屼緥濡傦細
 
 ```text
-v7.2.45-selfuse.20260629
+v7.2.46-selfuse.20260629
 ```
 
 NAS 鏈湴 Docker 闀滃儚寤鸿浣跨敤绋冲畾鏍囩锛?
 
 ```text
-cli-proxy-api:v7.2.45-selfuse.20260629
+cli-proxy-api:v7.2.46-selfuse.20260629
 ```
 
 ## 瀹夊叏璇存槑
